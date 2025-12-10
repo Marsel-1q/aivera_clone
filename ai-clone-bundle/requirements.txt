@@ -1,0 +1,18 @@
+fastapi
+uvicorn
+pyyaml
+pydantic
+python-multipart
+# llama-cpp-python  # Uncomment if using GGUF backend
+git+https://github.com/huggingface/transformers.git
+git+https://github.com/huggingface/peft.git
+git+https://github.com/huggingface/accelerate.git
+torch
+bitsandbytes>=0.41.0; platform_system == "Linux"
+qwen_vl_utils
+pillow
+torchvision
+chromadb
+python-telegram-bot
+flash-attn>=2.5.0; platform_system == "Linux"  # Flash Attention 2 for Qwen2.5-VL
+

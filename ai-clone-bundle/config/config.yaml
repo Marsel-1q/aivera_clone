@@ -1,0 +1,34 @@
+admin_panel:
+  host: 127.0.0.1
+  port: 3000
+clone:
+  id: local_clone_1
+  name: My Local AI Clone
+  system_prompt: 'Ты персональный ассистент. Отвечай дружелюбно, по делу и на русском.
+
+    '
+messengers:
+  telegram:
+    bots:
+    - bot_id: default
+      linked_clone_id: local_clone_1
+      token: 8309245444:AAHTGQMXCuePCKQDldmGhz5zB8IbOtc-Y30
+    enabled: true
+model:
+  backend: transformers
+  base_model_path: Qwen/Qwen2.5-VL-7B-Instruct
+  device: auto
+  lora_path: ./models/lora
+  max_tokens: 512
+  quantization:
+    compute_dtype: auto  # Auto-detect: bfloat16 for Ampere+, float16 for older GPUs
+    enable_4bit: true
+    quant_type: nf4
+    use_double_quant: true
+  temperature: 0.7
+rag:
+  db_path: ./data/rag
+  enabled: true
+  index_dir: ./data/rag_index
+  embedding_model: sentence-transformers/all-MiniLM-L6-v2
+  top_k: 5

@@ -1,0 +1,13 @@
+{
+  "demo-clones": {
+    "cloneId": "demo-clones",
+    "integrations": [
+      {
+        "platform": "telegram",
+        "active": true,
+        "token": "8309245444:AAHTGQMXCuePCKQDldmGhz5zB8IbOtc-Y30",
+        "updatedAt": 1764941455736
+      }
+    ]
+  }
+}
