@@ -17,7 +17,7 @@ function ClonesContent() {
                 const res = await fetch("/api/clones");
                 if (!res.ok) return;
                 const data = await res.json();
-                setClones(data.clones || []);
+                setClones(Array.isArray(data) ? data : (data.clones || []));
             } catch (err) {
                 console.error("Failed to load clones", err);
             }

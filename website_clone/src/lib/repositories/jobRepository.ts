@@ -121,6 +121,8 @@ export async function updateJobRepo(id: string, updates: Partial<TrainingJob>) {
         updated_at: Date.now()
     };
 
+    if (updates.cloneId) mappedUpdates.clone_id = updates.cloneId;
+    if (updates.cloneName) mappedUpdates.clone_name = updates.cloneName;
     if (updates.status) mappedUpdates.status = updates.status;
     if (updates.logs) mappedUpdates.logs = updates.logs;
     if (updates.error) mappedUpdates.error = updates.error;
