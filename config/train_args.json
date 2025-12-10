@@ -1,0 +1,17 @@
+{
+  "train_file": "data/processed_dataset/style/train.jsonl",
+  "eval_file": "data/processed_dataset/style/eval.jsonl",
+  "knowledge_file": "data/processed_dataset/knowledge/knowledge_chunks.jsonl",
+  "model_id": "google/paligemma2-10b-mix-448",
+  "trust_remote_code": true,
+  "epochs": 3,
+  "batch_size": 2,
+  "grad_accum": 8,
+  "max_seq_length": 1024,
+  "eval-steps": 30,
+  "persona_name": "assistant",
+  "target_modules": [
+    "q_proj", "k_proj", "v_proj", "o_proj",
+    "gate_proj", "up_proj", "down_proj"
+  ]
+}

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Project specific large files/dirs
+models/
+outputs/
+data/
+inferenced
+*.safetensors
+*.pt
+*.bin
+*.pth
+
+# AI Clone Bundle specific
+ai-clone-bundle/models/
+ai-clone-bundle/data/
+ai-clone-bundle/.venv/
