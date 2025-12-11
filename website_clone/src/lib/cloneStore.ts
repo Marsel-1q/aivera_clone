@@ -13,6 +13,7 @@ export interface KnowledgeSource {
 
 export interface CloneRecord {
   id: string;
+  userId?: string;
   name: string;
   modelId: string;
   jobId: string;

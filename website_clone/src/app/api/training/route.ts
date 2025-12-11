@@ -5,6 +5,7 @@ import { promises as fs } from "fs";
 import { z } from "zod";
 import { createJobRepo, updateJobRepo, appendLogRepo, getJob } from "@/lib/repositories/jobRepository";
 import { createCloneRepo, updateCloneRepo } from "@/lib/repositories/cloneRepository";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -35,6 +36,12 @@ const TrainPayloadSchema = z.object({
 type TrainPayload = z.infer<typeof TrainPayloadSchema>;
 
 export async function POST(request: Request) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   let payload: TrainPayload;
   try {
     const body = await request.json();

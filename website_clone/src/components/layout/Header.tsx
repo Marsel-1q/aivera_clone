@@ -1,10 +1,27 @@
 "use client";
 
-import { Bell, Search } from "lucide-react";
+import { useState } from "react";
+import { Bell, Search, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { createClient } from "@/lib/supabase/client";
 
 export function Header() {
+    const [loggingOut, setLoggingOut] = useState(false);
+
+    const handleLogout = async () => {
+        if (loggingOut) return;
+        setLoggingOut(true);
+        try {
+            const supabase = createClient();
+            await supabase.auth.signOut();
+            window.location.href = "/login";
+        } catch (err) {
+            console.error("Logout failed", err);
+            setLoggingOut(false);
+        }
+    };
+
     return (
         <header className="flex h-16 items-center justify-between border-b border-sidebar-border bg-background px-6">
             <div className="flex items-center gap-4">
@@ -22,6 +39,16 @@ export function Header() {
                 </Button>
                 <Button variant="outline" className="border-primary/50 text-primary hover:bg-primary/10 hover:text-primary">
                     Documentation
+                </Button>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground hover:text-foreground"
+                    onClick={handleLogout}
+                    disabled={loggingOut}
+                >
+                    <LogOut className="h-4 w-4 mr-2" />
+                    {loggingOut ? "Logging out..." : "Logout"}
                 </Button>
             </div>
         </header>

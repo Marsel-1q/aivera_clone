@@ -26,6 +26,7 @@ interface SupabaseClone {
 function mapToCloneRecord(row: SupabaseClone): CloneRecord {
     return {
         id: row.id,
+        userId: row.user_id,
         name: row.name,
         modelId: row.model_id,
         jobId: row.job_id || "",

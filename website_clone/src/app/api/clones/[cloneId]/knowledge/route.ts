@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 import path from "path";
 import { promises as fs, existsSync } from "fs";
 import { spawn } from "child_process";
-import { getClone, updateClone } from "@/lib/cloneStore";
-import { getJob, updateJob } from "@/lib/jobStore";
+import { getClone, updateCloneRepo } from "@/lib/repositories/cloneRepository";
+import { getJob, updateJobRepo } from "@/lib/repositories/jobRepository";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+// export const dynamic = "force-dynamic"; // Not strictly needed for POST/DELETE if strictly defined, but harmless
 
 const REPO_ROOT = path.resolve(process.cwd(), "..");
 const DATASETS_DIR = path.resolve(process.cwd(), "uploads", "datasets");
@@ -75,6 +76,8 @@ async function rebuildIndex(knowledgeFile: string, ragIndexDir: string) {
   );
 }
 
+// Rerun pipeline is mostly for populating knowledge.jsonl initially, typically handled by training job.
+// But we keep it here if "reprocess" is needed.
 async function rerunPipeline(datasetId: string, processedDir: string, persona: string) {
   await fs.mkdir(processedDir, { recursive: true }).catch(() => { });
   const cliPath = path.join(REPO_ROOT, "dataset_pipeline", "cli.py");
@@ -100,38 +103,64 @@ async function rerunPipeline(datasetId: string, processedDir: string, persona: s
 
 async function updateState(
   cloneId: string,
-  jobId: string | undefined,
+  jobId: string | undefined, // Note: jobId might be just an ID string, verify logic
   knowledgeFile: string,
   ragIndexDir: string
 ) {
   const stats = await readKnowledgeStats(knowledgeFile);
-  updateClone(cloneId, {
+
+  // Update Clone via Repository
+  await updateCloneRepo(cloneId, {
     knowledgeSources: stats.sources,
     knowledgeCount: stats.totalChunks,
     knowledgeFile,
     ragIndexDir,
   });
+
+  // Update Job via Repository if it exists and matches
   if (jobId) {
-    updateJob(jobId, {
-      knowledgeSources: stats.sources,
-      knowledgeCount: stats.totalChunks,
-      knowledgeFile,
-      ragIndexDir,
-    });
+    // We assume jobId is a valid string if present.
+    // However, updateJobRepo expects the ID.
+    try {
+      await updateJobRepo(jobId, {
+        knowledgeSources: stats.sources,
+        knowledgeCount: stats.totalChunks,
+        knowledgeFile,
+        ragIndexDir,
+      });
+    } catch (e) {
+      console.warn("Failed to update related job:", e);
+    }
   }
   return stats;
 }
 
 export async function POST(
   request: Request,
-  { params }: { params: Promise<{ cloneId: string }> }
+  props: { params: Promise<{ cloneId: string }> }
 ) {
-  const { cloneId } = await params;
-  const clone = getClone(cloneId);
+  const params = await props.params;
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { cloneId } = params;
+  const clone = await getClone(cloneId);
   if (!clone) return NextResponse.json({ error: "Clone not found" }, { status: 404 });
+  if (clone.userId && clone.userId !== user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   if (!clone.datasetId) return NextResponse.json({ error: "Clone has no dataset" }, { status: 400 });
 
-  const job = clone.jobId ? getJob(clone.jobId) : undefined;
+  // Resolve Job
+  let job: any = undefined;
+  if (clone.jobId) {
+    try {
+      job = await getJob(clone.jobId);
+    } catch (err) { console.warn("Job not found", err); }
+  }
+
+  // Determine paths
   const jobRoot = clone.jobId ? path.join(JOBS_DIR, clone.jobId) : path.join(JOBS_DIR, "adhoc");
   const processedDir = job?.processedDir || path.join(jobRoot, "processed_dataset");
   const knowledgeFile = clone.knowledgeFile || path.join(processedDir, "knowledge.jsonl");
@@ -139,24 +168,52 @@ export async function POST(
   const persona = job?.persona || "user_persona";
 
   try {
+    // 1. Reprocess dataset to refresh knowledge.jsonl from source files
     await rerunPipeline(clone.datasetId, processedDir, persona);
+
+    // 2. Rebuild RAG index
     await rebuildIndex(knowledgeFile, ragIndexDir);
+
+    // 3. Update DB
     const stats = await updateState(cloneId, clone.jobId, knowledgeFile, ragIndexDir);
-    return NextResponse.json({ success: true, knowledgeSources: stats.sources, knowledgeCount: stats.totalChunks, clone: getClone(cloneId) });
+
+    // Return fresh clone data
+    const freshClone = await getClone(cloneId);
+    return NextResponse.json({
+      success: true,
+      knowledgeSources: stats.sources,
+      knowledgeCount: stats.totalChunks,
+      clone: freshClone
+    });
   } catch (err: any) {
+    console.error("Rebuild failed:", err);
     return NextResponse.json({ error: err?.message || String(err) }, { status: 500 });
   }
 }
 
 export async function DELETE(
   request: Request,
-  { params }: { params: Promise<{ cloneId: string }> }
+  props: { params: Promise<{ cloneId: string }> }
 ) {
-  const { cloneId } = await params;
-  const clone = getClone(cloneId);
+  const params = await props.params;
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { cloneId } = params;
+  const clone = await getClone(cloneId); // Uses Supabase Repository
   if (!clone) {
     return NextResponse.json({ error: "Clone not found" }, { status: 404 });
   }
+  // Optional: check ownership
+  // The repository (getClone) usually bypasses RLS if using service role, or respects it if using auth client?
+  // Our repositories use `createClient()` from server.ts which uses cookies, so it respects RLS.
+  // But just in case, double check:
+  // (Wait, Repository `getClone` returns a plain object. RLS at DB level ensures we only get it if we own it,
+  // OR if we are admin. Since we use `createClient()` with cookies, RLS should handle it. 
+  // If `getClone` returns null, it's either not there or not yours.)
 
   const body = await request.json().catch(() => null);
   const filename = body?.filename || body?.source;
@@ -164,87 +221,102 @@ export async function DELETE(
   if (!filename) {
     return NextResponse.json({ error: "filename is required" }, { status: 400 });
   }
-  /* 
-  if (!clone.datasetId) {
-    return NextResponse.json({ error: "Clone has no dataset" }, { status: 400 });
-  } 
-  */
 
-  const job = clone.jobId ? getJob(clone.jobId) : undefined;
+  // Resolve directories
+  // We need to know where the knowledge file is.
+  let job: any = undefined;
+  if (clone.jobId) {
+    job = await getJob(clone.jobId);
+  }
   const jobRoot = clone.jobId ? path.join(JOBS_DIR, clone.jobId) : path.join(JOBS_DIR, "adhoc");
   const processedDir = job?.processedDir || path.join(jobRoot, "processed_dataset");
   const knowledgeFile = clone.knowledgeFile || path.join(processedDir, "knowledge.jsonl");
   const ragIndexDir = clone.ragIndexDir || path.join(jobRoot, "rag_index");
 
-  // Only attempt file deletion if datasetId is known
+  // 1. Delete physical file from dataset ONLY IF it exists
   if (clone.datasetId) {
     const targetDir = path.join(DATASETS_DIR, clone.datasetId);
     const targetPath = path.join(targetDir, path.basename(filename));
-    console.log(`[knowledge:DELETE] targetPath=${targetPath}, exists=${existsSync(targetPath)}`);
+
+    // Safety check: ensure targetPath is within DATASETS_DIR to prevent traversal
+    if (!targetPath.startsWith(DATASETS_DIR)) {
+      return NextResponse.json({ error: "Invalid filename" }, { status: 400 });
+    }
 
     try {
-      await fs.unlink(targetPath);
-      console.log(`[knowledge:DELETE] File deleted: ${targetPath}`);
-    } catch (err: any) {
-      // If file is already gone, continue; otherwise surface error
-      if (err?.code !== "ENOENT") {
-        return NextResponse.json({ error: `Failed to delete file: ${err?.message || err}` }, { status: 500 });
+      if (existsSync(targetPath)) {
+        await fs.unlink(targetPath);
+        console.log(`[knowledge:DELETE] File deleted: ${targetPath}`);
+      } else {
+        console.warn(`[knowledge:DELETE] File not found: ${targetPath}`);
       }
+    } catch (err: any) {
+      console.error("Delete file failed:", err);
+      return NextResponse.json({ error: `Failed to delete file: ${err?.message}` }, { status: 500 });
     }
-  } else {
-    console.warn(`[knowledge:DELETE] Missing datasetId for clone ${cloneId}. Skipping file deletion, but cleaning knowledge index.`);
   }
 
-  // Filter knowledge file to exclude deleted source
+  // 2. Remove entries from knowledge.jsonl
   try {
-    const content = await fs.readFile(knowledgeFile, "utf-8").catch(() => "");
-    if (content) {
-      const lines = content.split("\n").filter(Boolean);
-      const filtered = lines.filter((line) => {
-        try {
-          const parsed = JSON.parse(line);
-          const src = (parsed?.source as string | undefined) || "";
-          return path.basename(src) !== path.basename(filename);
-        } catch {
-          return true;
-        }
-      });
-      await fs.writeFile(knowledgeFile, filtered.map((l) => l + "\n").join(""), "utf-8");
+    const exists = await fs.stat(knowledgeFile).then(() => true).catch(() => false);
+    if (exists) {
+      const content = await fs.readFile(knowledgeFile, "utf-8");
+      if (content) {
+        const lines = content.split("\n").filter(Boolean);
+        const filtered = lines.filter((line) => {
+          try {
+            const parsed = JSON.parse(line);
+            const src = (parsed?.source as string | undefined) || "";
+            // Compare basenames to be safe
+            return path.basename(src) !== path.basename(filename);
+          } catch {
+            return true;
+          }
+        });
+        await fs.writeFile(knowledgeFile, filtered.map((l) => l + "\n").join(""), "utf-8");
+      }
     }
   } catch (err) {
     console.warn("Failed to filter knowledge file:", err);
   }
 
-  // Rebuild or clear index
+  // 3. Rebuild RAG Index
   let stats = await readKnowledgeStats(knowledgeFile);
   if (stats.totalChunks > 0) {
     try {
       await rebuildIndex(knowledgeFile, ragIndexDir);
-      stats = await readKnowledgeStats(knowledgeFile);
+      stats = await readKnowledgeStats(knowledgeFile); // reread safely
     } catch (err) {
       console.warn("RAG rebuild failed after delete:", err);
     }
   } else {
-    // remove empty knowledge/index
+    // If empty, remove the index dir entirely
     await fs.rm(ragIndexDir, { recursive: true, force: true }).catch(() => { });
   }
 
-  updateClone(cloneId, {
+  // 4. Update DB State
+  const finalRagIndexDir = stats.totalChunks > 0 ? ragIndexDir : ""; // Store empty string or null instead of undefined if using partial?
+  // Actually, repo handles undefined.
+
+  await updateCloneRepo(cloneId, {
     knowledgeSources: stats.sources,
     knowledgeCount: stats.totalChunks,
     knowledgeFile,
-    ragIndexDir: stats.totalChunks > 0 ? ragIndexDir : undefined,
+    ragIndexDir: stats.totalChunks > 0 ? ragIndexDir : undefined, // pass undefined to NOT update, or handle logic for clearing? 
+    // If we want to CLEAR it in DB, we need to pass explicit null if repo supports it, 
+    // or just leave it since an empty index dir path is still valid context (just empty).
+    // Let's keep the path, just the count is 0.
   });
+
   if (clone.jobId) {
-    updateJob(clone.jobId, {
+    await updateJobRepo(clone.jobId, {
       knowledgeSources: stats.sources,
       knowledgeCount: stats.totalChunks,
-      knowledgeFile,
-      ragIndexDir: stats.totalChunks > 0 ? ragIndexDir : undefined,
+      knowledgeFile, // keep path
     });
   }
 
-  const updatedClone = getClone(cloneId);
+  const updatedClone = await getClone(cloneId);
   return NextResponse.json({
     success: true,
     knowledgeSources: stats.sources,

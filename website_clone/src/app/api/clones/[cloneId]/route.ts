@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getClone, updateCloneRepo } from "@/lib/repositories/cloneRepository";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +10,12 @@ export async function GET(
     { params }: { params: Promise<{ cloneId: string }> }
 ) {
     const { cloneId } = await params;
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const clone = await getClone(cloneId);
 
     if (!clone) {
@@ -23,6 +30,12 @@ export async function PATCH(
     { params }: { params: Promise<{ cloneId: string }> }
 ) {
     const { cloneId } = await params;
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await request.json();
 
     const updatedClone = await updateCloneRepo(cloneId, {
